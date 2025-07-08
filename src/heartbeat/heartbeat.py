@@ -1,27 +1,38 @@
-from threading import Thread, Timer
+from threading import Timer
 from src.multicast import MulticastChannel
 from pyee import EventEmitter
+import os
+import logging
 
-class HeartbeatBeacon():
+logger = logging.getLogger('middleware')
+
+class Heartbeat():
     '''
         Gerencia o envio de heartbeats
 
         Args:
             freq (float): intervalo de envio do heartbeat em segundos
-            message (bytes): mensagem que deve ser enviada no payload do heartbeat
+            message (str): mensagem que deve ser enviada no payload do heartbeat
     '''
-    def __init__(self, freq: float, message: bytes):
+    def __init__(self, freq: float, message: str):
         self.is_running = False
         self.freq = freq
         self.message = message
         self.sender_timer = None
         self.multicast_channel = None
+        
+    def set_multicast_channel(self, channel: MulticastChannel):
+        self.multicast_channel = channel
 
-    def start(self, multicast_channel: MulticastChannel):
+    def start(self):
         '''
             Começa a enviar heartbeats no canal multicast fornecido
         '''
-        self.multicast_channel = multicast_channel
+        if not self.multicast_channel:
+            logger.error('Heartbeat: canal multicast não setado')
+            return
+        
+        logger.info('Heartbeat: iniciando...')
         self.is_running = True
         self._send()
         
@@ -33,54 +44,7 @@ class HeartbeatBeacon():
         
     def _send(self):
         if self.is_running:
+            # logger.debug('Heartbeat: heartbeat enviado')
             self.multicast_channel.send(self.message)
             self.sender_timer = Timer(self.freq, self._send)
             self.sender_timer.start()
-
-class HeartbeatMonitor(EventEmitter):
-    '''
-        Gerencia o recebimento de heartbeats
-
-        Args:
-            timeout (float): timeout em segundos
-            id_parser (function(bytes) -> hashable): callback que recebe a mensagem recebida e retorna o identificador do processo remetente
-        Events:
-            heartbeat(message: bytes)
-                - `message`: a mensagem recebida no payload do heartbeat
-            timeout(id: hashable):
-                - `id`: o id do membro que sofreu timeout
-    '''
-    def __init__(self, timeout: float, id_parser: function):
-        self.timeout = timeout
-        self.id_parser = id_parser
-        self.timer_table = {}
-        self.multicast_channel = None
-        self.running = False
-
-    def start(self, multicast_channel: MulticastChannel):
-        '''
-            Começa a monitorar heartbeats no canal multicast fornecido
-        '''
-        self.multicast_channel = multicast_channel
-        self.running = True
-
-        def receive_loop():
-            while self.running:
-                recv_message = self.multicast_channel.receive()
-                id = self.id_parser(recv_message)
-                timer: Timer = self.timer_table.get(id)
-                
-                if timer is not None:
-                    timer.cancel()
-                
-                self.timer_table[id] = Timer(self.timeout, lambda: self.emit('timeout', id))
-                self.emit('heartbeat', recv_message)
-        
-        self.receiver_thread = Thread(target=receive_loop)
-        self.receiver_thread.start()
-        
-    def stop(self):
-        '''
-            Para de receber heartbeats
-        '''
-        self.running = False

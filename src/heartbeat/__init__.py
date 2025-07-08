@@ -1,1 +1,1 @@
-from .heartbeat import HeartbeatBeacon, HeartbeatMonitor
+from .heartbeat import Heartbeat
